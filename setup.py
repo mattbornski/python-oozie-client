@@ -8,4 +8,5 @@ setuptools.setup(name='oozie',
       author='Matt Bornski',
       author_email='matt@bornski.com',
       license='GPLv3',
+      scripts=['bin/oozie-echo', 'bin/oozie-healthcheck'],
       url='https://github.com/mattbornski/python-oozie-client')

@@ -6,6 +6,8 @@ import logging
 import os
 import sys
 
+from . import workflow
+
 class ClientError(Exception):
     pass
 
@@ -33,12 +35,3 @@ class client(object):
             raise ClientError('HTTP Error ' + str(e.getcode()) + ': ' + e.msg + ' ' + e.geturl())
     def run(self, workflow):
         pass
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
-    c = client()
-    examples = {
-        'echo': lambda c: c.run({}),
-    }
-    # Run given example name please
-    examples.get((sys.argv + [None])[1], lambda c: c.healthcheck())(c)
