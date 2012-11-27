@@ -1,10 +1,8 @@
 #!/usr/bin/env python
 
-import json
-import urllib2
 import logging
 import os
-import sys
+import requests
 
 from . import workflow
 
@@ -23,7 +21,7 @@ class client(object):
         self._url = url
     def healthcheck(self):
         try:
-            systemMode = json.loads(urllib2.urlopen(self._url + 'v1/admin/status').read().strip())['systemMode']
+            systemMode = requests.get(self._url + 'v1/admin/status').json['systemMode']
             assert(systemMode == 'NORMAL')
             logging.info('Oozie installation at ' + self._url + ' appears operational')
             return True
@@ -34,4 +32,7 @@ class client(object):
         except urllib2.HTTPError as e:
             raise ClientError('HTTP Error ' + str(e.getcode()) + ': ' + e.msg + ' ' + e.geturl())
     def run(self, workflow):
+        # Validate workflow
+        
+        # Submit job
         pass
