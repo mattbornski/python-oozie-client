@@ -1,2 +1,0 @@
-class workflow(dict):
-    pass

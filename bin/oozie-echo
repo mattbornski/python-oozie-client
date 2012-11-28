@@ -5,6 +5,11 @@ import oozie
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-    oozie.client().run({
-        '': '',
+    wf = oozie.workflow({
+        'name': 'echoWorkflow',
     })
+    action1 = wf.add_action({
+        'template': 'map-reduce',
+        'name': 'action1',
+    })
+    oozie.client().run(wf)
