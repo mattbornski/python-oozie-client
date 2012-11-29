@@ -2,70 +2,183 @@
 
 import logging
 import lxml.etree
-import os
 import os.path
 import random
-import requests
 import socket
 import time
 
 # Generate useful errors for our callers.
 from . import errors
-# Export the "workflow" element to our importers.
-from .elements import workflow
+# The elements represent XML nodes used to configure Oozie.
+from . import elements
+# We use the Oozie client to communicate with the Oozie cluster.
+from . import oozie
 # We use the HDFS client to place workflows in the required location.
 from . import hdfs
 
 
 
+OUTPUT_SCRATCH_DIR = '/tmp/oozieoutput/'
 WORKFLOW_SCRATCH_DIR = '/tmp/oozieworkflows/'
 
 
 
-class client(object):
-    def __init__(self, url=None):
-        if url is None:
-            url = os.environ.get('OOZIE_URL')
-        if url is None:
-            raise errors.ClientError('No Oozie URL provided and none set in environment OOZIE_URL')
-        self._url = url.rstrip('/')
-        self._version = 'v1'
-    def healthcheck(self):
+class runHistory(object):
+    def __new__(self, *args, **kwargs):
+        print 'instantiate a runHistory object please'
+        print args
+        print kwargs
+
+
+class jobConfiguration(object):
+    # A job is a particular configuration of work.
+    # Jobs must be assigned to a cluster before they can be run.
+    # When jobs are run, they generate runs.
+    # A job will have 0 or more runs in it's history.
+    # Some functions of the job will implicitly return information from the
+    # most recent job run.
+    def __init__(self, *args, **kwargs):
+        # Jobs can be initialized from:
+        #  - a job id which already exists
+        #  - an HDFS directory which contains a workflow.xml or a coordinator.xml
+        #  - a local directory which contains a workflow.xml or a coordinator.xml (requires HDFS access)
+        #  - a Python workflow object or coordinator object (requires HDFS access)
+        
+        # We could be initialized from a workflow object (XML)
+        wf = kwargs.get('workflow', (list(args) + [None])[0])
+        if isinstance(wf, elements.workflow):
+            # Init from a workflow object
+            pass
+        # We could also be initialized from 
+    
+    # Jobs need to interact with HDFS via WebHDFS and Oozie via the web
+    # service APIs.
+    @property
+    def _hdfsClient(self):
         try:
-            systemMode = requests.get('/'.join([self._url, self._version, 'admin/status'])).json['systemMode']
-            assert(systemMode == 'NORMAL')
-            logging.info('Oozie installation at ' + self._url + ' appears operational')
-            return True
-        except AssertionError:
-            raise errors.ServerError(systemMode)
-        except ValueError as e:
-            raise errors.ClientError(e.message)
-        except urllib2.HTTPError as e:
-            raise errors.ClientError('HTTP Error ' + str(e.getcode()) + ': ' + e.msg + ' ' + e.geturl())
-    def run(self, wf):
-        # Validate workflow
-        # Requires at least one start node
-        #  - which points to an existing action node
-        # Requires at least one action node
-        #  - which should point to existing kill node on failure
-        #  - which should point to existing action node or existing end node on success
-        wf.validate()
-        # Submit job
-        # Workflow job submission requires that the workflow XML file be
-        # visible in HDFS, so first things first, we'll upload the XML file.
-        hdfsClient = hdfs.client()
-        hdfsClient.mkdir(WORKFLOW_SCRATCH_DIR)
-        # Hostname + timestamp + random number will be my attempt at conflict-free writes.
-        workflowDirectory = os.path.join(WORKFLOW_SCRATCH_DIR, '-'.join([socket.gethostname(), str(int(time.time() * 1000)), str(random.random())]))
-        hdfsClient.mkdir(workflowDirectory)
-        workflowPath = os.path.join(workflowDirectory, 'workflow.xml')
-        hdfsClient.write(workflowPath, lxml.etree.tostring(wf, pretty_print=True))
-        # Secondly, we'll compose the proper Oozie request which will run
-        # the workflow on the cluster.
-        conf = elements.configuration({
-            'user.name': 'hdfs',
-            'oozie.wf.application.path': workflowDirectory,
-        })
+            assert self.__hdfsClient is not None
+        except AttributeError:
+            self.__hdfsClient = hdfs.client()
+        return self.__hdfsClient
+    
+    @property
+    def _oozieClient(self):
+        try:
+            assert self.__oozieClient is not None
+        except AttributeError:
+            self.__oozieClient = oozie.client()
+        return self.__oozieClient
+    
+    
+    # These properties generally need to be discovered or assigned once, at
+    # which point they become static.
+    @property
+    def uniquifier(self):
+        try:
+            assert self._uniquifier is not None
+        except AttributeError:
+            self._uniquifier = '-'.join([self.get('name'), socket.gethostname(), str(int(time.time() * 1000)), str(random.random())])
+        return self._uniquifier
+    
+    @property
+    def id(self):
+        # Determine the id of this job, submitting it to Oozie if necessary to generate one.
+        try:
+            assert self._id is not None
+        except AttributeError:
+            self.submit()
+        return self._id
+    
+    @property
+    def status(self):
+        # Determine the status of this job, querying Oozie to find it.
+        return self._oozieClient.status(self.id)
+    
+    @property
+    def sourcePath(self):
+        # Determine or create the HDFS source path for this job.
+        try:
+            assert self._sourcePath is not None
+        except AttributeError:
+            # Workflow job submission requires that the workflow XML file be
+            # visible in HDFS, so first things first, we'll upload the XML file.
+            self._hdfsClient.mkdir(WORKFLOW_SCRATCH_DIR)
+            # Hostname + timestamp + random number will be my attempt at conflict-free writes.
+            workflowDirectory = os.path.join(WORKFLOW_SCRATCH_DIR, self.uniquifier)
+            self._hdfsClient.mkdir(workflowDirectory)
+            workflowPath = os.path.join(workflowDirectory, 'workflow.xml')
+            print lxml.etree.tostring(self, pretty_print=True)
+            self._hdfsClient.write(workflowPath, lxml.etree.tostring(self, pretty_print=True))
+            # Let's also upload an XML file which contains configuration defaults.
+            #defaultConfigPath = os.path.join(workflowDirectory, 'config-default.xml')
+            #defaultConfig = elements.configuration({
+            #    'jobTracker': '',
+            #    'nameNode': '',
+            #    'input': 'hdfs://',
+            #    'output': 'hdfs://',
+            #})
+            #self._hdfsClient.write(defaultConfigPath, lxml.etree.tostring(defaultConfig, pretty_print=True))
+            # Set the containing directory as our source path
+            self._sourcePath = workflowDirectory
+        return self._sourcePath
+    @property
+    def outputPath(self):
+        # Determine or assign the HDFS output path for this invocation of this job.
+        try:
+            assert self._outputPath is not None
+        except AttributeError:
+            # Assign directory to handle output
+            # DO NOT create the directory; Hadoop likes to do that itself.
+            # TODO most people will want to configure this to something else.
+            outputDirectory = os.path.join(OUTPUT_SCRATCH_DIR, self.uniquifier)
+            #self._hdfsClient.mkdir(outputDirectory)
+            self._outputPath = outputDirectory
+        return self._outputPath
+    
+    # Actions which we can take for this job against the Oozie service.
+    def submit(self, parameters=None):
+        # Compose the proper Oozie request which will submit the workflow to
+        # the cluster.
+        parameters = parameters or {}
+        if 'user.name' not in parameters:
+            parameters['user.name'] = 'hdfs'
+        if 'oozie.wf.application.path' not in parameters:
+            parameters['oozie.wf.application.path'] = 'hdfs://' + ([''] + self.sourcePath.split('hdfs://', 1))[-1]
+        # The Hadoop client jars must be uploaded to HDFS beforehand.
+        # TODO is this a sane default for most people?
+        if 'oozie.libpath' not in parameters:
+            parameters['oozie.libpath'] = 'hdfs:///user/' + parameters['user.name'] + '/lib'
+            
+        # Required parameters which you might not have set.
+        # We'll try to do it for you if we can.
+        if 'jobTracker' not in parameters:
+            parameters['jobTracker'] = self._oozieClient.config().get('oozie.service.HadoopAccessorService.jobTracker.whitelist')
+        if 'nameNode' not in parameters:
+            parameters['nameNode'] = self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist')
+        
+        # Default substitutions I think you might use and I am using to test this
+        # TODO this is definitely not a sane default.
+        if 'input' not in parameters:
+            parameters['input'] = 'hdfs:///logs/dev/2012-11-27/*'
+        if 'output' not in parameters:
+            parameters['output'] = 'hdfs://' + ([''] + self.outputPath.split('hdfs://', 1))[-1]
+        conf = elements.configuration(parameters)
         print lxml.etree.tostring(conf, pretty_print=True)
-        import sys
-        print requests.post('/'.join([self._url, self._version, 'jobs']), data=lxml.etree.tostring(conf), headers={'content-type':'application/xml'}, config={'verbose': sys.stderr}).text
+        self._id = self._oozieClient.submit(lxml.etree.tostring(conf))
+        return True
+    def run(self):
+        return runHistory(self._oozieClient.run(self.id))
+    def suspend(self):
+        pass
+    def resume(self):
+        pass
+    def kill(self):
+        pass
+    def rerun(self, skip, parameters):
+        pass
+    def schedule(self, action, ts, parameters):
+        # Create a coordinator job which will run the job at the specified time.
+        pass
+
+class workflowJob(elements.workflow, jobConfiguration):
+    pass

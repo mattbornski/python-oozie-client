@@ -2,14 +2,23 @@
 
 import logging
 import oozie
+import time
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-    wf = oozie.workflow({
+    wf = oozie.workflowJob({
         'name': 'echoWorkflow',
     })
     action1 = wf.add_action({
         'template': 'map-reduce',
         'name': 'action1',
     })
-    oozie.client().run(wf)
+    wf.fix()
+    wf.run()
+    while True:
+        status = wf.status
+        print status
+        if status not in ['PENDING', 'RUNNING']:
+            break
+        else:
+            time.sleep(30)

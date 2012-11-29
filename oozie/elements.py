@@ -92,7 +92,7 @@ class workflow(_parameterizedElement):
                 killElement = self.makeelement('kill')
                 killElement.set('name', name)
                 messageElement = killElement.makeelement('message')
-                messageElement.text = 'Map/Reduce failed, error message[${wf:errorMessage()}]'
+                messageElement.text = 'Map/Reduce failed, error message[${wf:errorMessage(wf:lastErrorNode())}]'
                 killElement.append(messageElement)
                 self.append(killElement)
             
@@ -117,7 +117,6 @@ class workflow(_parameterizedElement):
         try:
             assert len(list(self.iterchildren(tag='start'))) == 1, 'no start node'
             assert len(list(self.iterchildren(tag='action'))) >= 1, 'no action nodes'
-            #assert len(list(self.iterchildren(tag='kill'))) >= 1, 'no kill node'
             assert len(list(self.iterchildren(tag='end'))) == 1, 'no end node'
             
             assert list(self.iterchildren())[0].tag == 'start', 'start node not first'
@@ -128,6 +127,11 @@ class workflow(_parameterizedElement):
                 assert len(list(action.iterchildren(tag='error'))) == 1, 'no error node'
                 assert list(action.iterchildren())[-2].tag == 'ok', 'ok node not second to last'
                 assert list(action.iterchildren())[-1].tag == 'error', 'error node not last'
+            
+            # Ensure all referenced nodes exist.
+            existingNodeNames = set([node.get('name') for node in lxml.etree.XPath('//action | //end | //kill')(self)])
+            referencedNodeNames = set([node.get('to') for node in lxml.etree.XPath('//*[@to]')(self)])
+            assert len(referencedNodeNames - existingNodeNames) == 0, 'some referenced nodes do not exist'
             
         except AssertionError as e:
             raise errors.ClientError('Workflow appears malformed: ' + e.message)
@@ -141,19 +145,23 @@ class action(_parameterizedElement):
         # tag name to remain as "action" when we do.
         self.tag = 'action'
 
-class _mapreduce(_parameterizedElement):
+class _nestedAction(_parameterizedElement):
     def __init__(self, *args, **kwargs):
-        super(_mapreduce, self).__init__(*args, **kwargs)
-        # Override the tag.  The map reduce action element is "map-reduce"
-        self.tag = 'map-reduce'
+        super(_nestedAction, self).__init__(*args, **kwargs)
         # Add the required parameterized tags for the Hadoop cluster's
         # basic config.
         jt = self.makeelement('job-tracker')
-        jt.text = '${jobTracker}'
+        jt.text = '${wf:conf("jobTracker")}'
         self.append(jt)
         nn = self.makeelement('name-node')
-        nn.text = '${nameNode}'
+        nn.text = '${wf:conf("nameNode")}'
         self.append(nn)
+
+class _nestedMapReduce(_nestedAction):
+    def __init__(self, *args, **kwargs):
+        super(_nestedMapReduce, self).__init__(*args, **kwargs)
+        # Override the tag.  The map reduce action element is "map-reduce"
+        self.tag = 'map-reduce'
         # Add the Streaming nature
         s = self.makeelement('streaming')
         m = s.makeelement('mapper')
@@ -164,12 +172,15 @@ class _mapreduce(_parameterizedElement):
         s.append(r)
         self.append(s)
         # Add the non-basic Hadoop config.
-        #self.append(configuration())
+        self.append(configuration({
+            'mapred.input.dir': '${wf:conf("input")}',
+            'mapred.output.dir': '${wf:conf("output")}',
+        }))
 
 class mapreduce(action):
     def __init__(self, *args, **kwargs):
         super(mapreduce, self).__init__(*args, **kwargs)
-        self.append(_mapreduce())
+        self.append(_nestedMapReduce())
 
 class ok(_parameterizedElement):
     pass
@@ -189,7 +200,16 @@ class configuration(_parameterizedElement):
             name.text = k
             prop.append(name)
             value = prop.makeelement('value')
-            value.text = v
+            if v is None:
+                value.text = ''
+            elif v is False:
+                value.text = 'false'
+            elif v is True:
+                value.text = 'true'
+            elif isinstance(v, basestring):
+                value.text = v
+            else:
+                value.text = str(v)
             prop.append(value)
             self.append(prop)
 
