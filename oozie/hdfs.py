@@ -26,12 +26,12 @@ class client(webhdfs.webhdfs.WebHDFS):
             args[1] = args[1].lstrip('/')
         return super(client, self).copyFromLocal(*args, **kwargs)
     def copyToLocal(self, *args, **kwargs):
-        # Second argument is target_path.
+        # First argument is source_path.
         try:
-            kwargs['target_path'] = kwargs['target_path'].lstrip('/')
+            kwargs['source_path'] = kwargs['source_path'].lstrip('/')
         except KeyError:
             args = list(args)
-            args[1] = args[1].lstrip('/')
+            args[0] = args[0].lstrip('/')
         return super(client, self).copyToLocal(*args, **kwargs)
     # Create helper functions which read and write buffers instead of
     # requiring filenames.

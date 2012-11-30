@@ -23,33 +23,31 @@ WORKFLOW_SCRATCH_DIR = '/tmp/oozieworkflows/'
 
 
 
-class runHistory(object):
-    def __new__(self, *args, **kwargs):
-        print 'instantiate a runHistory object please'
-        print args
-        print kwargs
-
-
 class jobConfiguration(object):
     # A job is a particular configuration of work.
     # Jobs must be assigned to a cluster before they can be run.
-    # When jobs are run, they generate runs.
     # A job will have 0 or more runs in it's history.
-    # Some functions of the job will implicitly return information from the
+    # Most functions of the job will implicitly return information from the
     # most recent job run.
-    def __init__(self, *args, **kwargs):
-        # Jobs can be initialized from:
-        #  - a job id which already exists
-        #  - an HDFS directory which contains a workflow.xml or a coordinator.xml
-        #  - a local directory which contains a workflow.xml or a coordinator.xml (requires HDFS access)
-        #  - a Python workflow object or coordinator object (requires HDFS access)
-        
-        # We could be initialized from a workflow object (XML)
-        wf = kwargs.get('workflow', (list(args) + [None])[0])
-        if isinstance(wf, elements.workflow):
-            # Init from a workflow object
-            pass
-        # We could also be initialized from 
+    
+    #def __new__(cls, *args, **kwargs):
+    #    print 'instantiate a jobConfiguration object please'
+    #    print args
+    #    print kwargs
+    #    # Jobs can be initialized from:
+    #    #  - a job id which already exists
+    #    #  - an HDFS directory which contains a workflow.xml or a coordinator.xml
+    #    #  - a local directory which contains a workflow.xml or a coordinator.xml (requires HDFS access)
+    #    #  - a Python workflow object or coordinator object (requires HDFS access)
+    #    
+    #    # We could be initialized from a workflow object (XML)
+    #    wf = kwargs.get('workflow', (list(args) + [None])[0])
+    #    if isinstance(wf, elements.workflow):
+    #        # Init from a workflow object
+    #        pass
+    #    # We could also be initialized from
+    #    
+    #    return
     
     # Jobs need to interact with HDFS via WebHDFS and Oozie via the web
     # service APIs.
@@ -93,6 +91,25 @@ class jobConfiguration(object):
     def status(self):
         # Determine the status of this job, querying Oozie to find it.
         return self._oozieClient.status(self.id)
+    
+    def upload(self, localFilename, remoteFilename=None):
+        try:
+            assert os.path.exists(localFilename)
+        except AssertionError:
+            raise errors.ClientError('File to upload does not exist: "' + localFilename + '"')
+        # Absolute paths will be respected.
+        # Relative paths will be interpreted as relative to the job's scratch directory.
+        # No remote filename provided will result in the same basename in the workflow source
+        # directory.
+        if remoteFilename is None:
+            remoteFilename = os.path.basename(localFilename)
+        remoteFilename = ([''] + remoteFilename.split('hdfs://', 1))[-1]
+        if not remoteFilename.startswith('/'):
+            remoteFilename = os.path.join(self.sourcePath, remoteFilename)
+        self._hdfsClient.mkdir(os.path.dirname(remoteFilename))
+        self._hdfsClient.copyFromLocal(localFilename, remoteFilename)
+        remoteFilename = 'hdfs://' + remoteFilename
+        return remoteFilename
     
     @property
     def sourcePath(self):
@@ -157,9 +174,6 @@ class jobConfiguration(object):
             parameters['nameNode'] = self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist')
         
         # Default substitutions I think you might use and I am using to test this
-        # TODO this is definitely not a sane default.
-        if 'input' not in parameters:
-            parameters['input'] = 'hdfs:///logs/dev/2012-11-27/*'
         if 'output' not in parameters:
             parameters['output'] = 'hdfs://' + ([''] + self.outputPath.split('hdfs://', 1))[-1]
         conf = elements.configuration(parameters)
@@ -167,7 +181,7 @@ class jobConfiguration(object):
         self._id = self._oozieClient.submit(lxml.etree.tostring(conf))
         return True
     def run(self):
-        return runHistory(self._oozieClient.run(self.id))
+        return self._oozieClient.run(self.id)
     def suspend(self):
         pass
     def resume(self):
@@ -179,6 +193,29 @@ class jobConfiguration(object):
     def schedule(self, action, ts, parameters):
         # Create a coordinator job which will run the job at the specified time.
         pass
+    
+    def iterOutputFilenames(self):
+        try:
+            assert self.status == 'SUCCEEDED'
+        except AssertionError:
+            self.run()
+        # Inventory output directory
+        def inventoryFilesRecursively(path):
+            subpaths = self._hdfsClient.listdir(path)
+            if len(subpaths) == 1 and subpaths[0] == '':
+                yield path
+            else:
+                for subpath in subpaths:
+                    if not subpath.startswith('_'):
+                        for filename in inventoryFilesRecursively(os.path.join(path, subpath)):
+                            yield filename
+        for filename in inventoryFilesRecursively(self.outputPath):
+            # Retrieve file
+            yield filename
+    def iterOutputLines(self):
+        for filename in self.iterOutputFilenames():
+            for line in self._hdfsClient.read(filename).splitlines():
+                yield line.rstrip('\n')
 
 class workflowJob(elements.workflow, jobConfiguration):
     pass

@@ -1,3 +1,4 @@
+import collections
 import logging
 import lxml.etree
 
@@ -6,43 +7,52 @@ from . import errors
 
 
 class _parameterizedElement(lxml.etree.ElementBase):
-    # setting allow to ['foo', 'bar'] will only let properties of 'foo' or
-    # 'bar' be set on this object
-    allow = None
-    # setting deny to ['boo', 'far'] will prohibit properties 'boo' and 'far'
-    # from being set on this object
-    deny = None
-    # setting both deny and allow will result in the most restrictive
-    # interpretation: a key must be allowed and not denied to be set.
+    # setting allowedAttributes to ['foo', 'bar'] will only let attributes
+    # 'foo' or 'bar' be set on this object.
+    allowedAttributes = None
+    # setting deniedAttributes to ['boo', 'far'] will prohibit attributes
+    # 'boo' and 'far' from being set on this object.
+    deniedAttributes = None
+    # setting both deniedAttributes and allowedAttributes will result in the
+    # most restrictive interpretation: an attributes must be in the
+    # allowedAttributes list and not in the deniedAttributed list to be set.
     def __init__(self, *args, **kwargs):
         super(_parameterizedElement, self).__init__()
         self._parameters = kwargs.get('parameters', (list(args) + [{}])[0])
         self._setAttributes(self._parameters)
     def _setAttributes(self, attributes):
         for (k, v) in attributes.iteritems():
-            if self.deny is not None and k in self.deny:
+            if self.deniedAttributes is not None and k in self.deniedAttributes:
                 continue
-            if self.allow is None or k in self.allow:
+            if self.allowedAttributes is None or k in self.allowedAttributes:
                 self.set(k, v)
 
 class workflow(_parameterizedElement):
     def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['actions', 'template'])
         super(workflow, self).__init__(*args, **kwargs)
         # Override the tag.  The XML workflow parent element is "workflow-app"
         self.tag = 'workflow-app'
         self.set('xmlns', 'uri:oozie:workflow:0.1')
+        for action in self._parameters.get('actions'):
+            self.add_action(action)
         
     def add_action(self, parameters=None):
         parameters = parameters or {}
+        if parameters.get('name') is None:
+            parameters['name'] = 'action-' + str(len(list(self.iterchildren())) + 1)
         if parameters.get('template') is not None:
             actionElement = {
-                'map-reduce': mapreduce({k: v for (k, v) in parameters.iteritems() if k not in ['template']}),
+                'map-reduce': mapreduce({k: v for (k, v) in parameters.iteritems() if k not in self.deniedAttributes}),
             }[parameters.get('template')]
         else:
             actionElement = action(parameters)
         self.append(actionElement)
         return actionElement
     def fix(self):
+        print lxml.etree.tostring(self, pretty_print=True)
+        
         # Must have a start node
         if len(list(self.iterchildren(tag='start'))) < 1 and len(list(self.iterchildren(tag='action'))) > 0:
             start = self.makeelement('start')
@@ -138,6 +148,8 @@ class workflow(_parameterizedElement):
 
 class action(_parameterizedElement):
     def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['input', 'output'])
         super(action, self).__init__(*args, **kwargs)
         # Override the tag.  The action element is "action".
         # We normally wouldn't have to do this because the class name is the
@@ -147,6 +159,8 @@ class action(_parameterizedElement):
 
 class _nestedAction(_parameterizedElement):
     def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['input', 'output'])
         super(_nestedAction, self).__init__(*args, **kwargs)
         # Add the required parameterized tags for the Hadoop cluster's
         # basic config.
@@ -159,28 +173,36 @@ class _nestedAction(_parameterizedElement):
 
 class _nestedMapReduce(_nestedAction):
     def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['mapper', 'reducer', 'name'])
         super(_nestedMapReduce, self).__init__(*args, **kwargs)
         # Override the tag.  The map reduce action element is "map-reduce"
         self.tag = 'map-reduce'
         # Add the Streaming nature
         s = self.makeelement('streaming')
         m = s.makeelement('mapper')
-        m.text = '/bin/cat'
+        m.text = self._parameters['mapper']
         s.append(m)
         r = s.makeelement('reducer')
-        r.text = '/bin/cat'
+        r.text = self._parameters['reducer']
         s.append(r)
         self.append(s)
-        # Add the non-basic Hadoop config.
-        self.append(configuration({
-            'mapred.input.dir': '${wf:conf("input")}',
-            'mapred.output.dir': '${wf:conf("output")}',
-        }))
+        # Add the config for this action.
+        parameters = {
+            'mapred.input.dir': self._parameters.get('input', '${wf:conf("' + self._parameters['name'] + '-input")}'),
+            'mapred.output.dir': self._parameters.get('output', '${wf:conf("output")}/' + self._parameters['name']),
+        }
+        for (k, v) in self._parameters.iteritems():
+            if k in self.deniedAttributes and k not in ['mapper', 'reducer', 'name']:
+                parameters[k] = v 
+        self.append(configuration(parameters))
 
 class mapreduce(action):
     def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['mapper', 'reducer'])
         super(mapreduce, self).__init__(*args, **kwargs)
-        self.append(_nestedMapReduce())
+        self.append(_nestedMapReduce({k: v for (k, v) in self._parameters.iteritems() if k in (self.deniedAttributes + ['name'])}))
 
 class ok(_parameterizedElement):
     pass
@@ -190,26 +212,31 @@ class error(_parameterizedElement):
 
 
 
+def _flattenForConfigFile(value):
+    if value is None:
+        return ''
+    elif value is False:
+        return 'false'
+    elif value is True:
+        return 'true'
+    elif isinstance(value, basestring):
+        return value
+    elif isinstance(value, collections.Sequence):
+        return ' '.join([_flattenForConfigFile(v) for v in value])
+    else:
+        return str(value)
+
 class configuration(_parameterizedElement):
-    allow = []
-    def __init__(self, *args, **kwargs):
-        super(configuration, self).__init__(*args, **kwargs)
-        for (k, v) in self._parameters.iteritems():
+    # Override this function.  We do not have attributes;
+    # rather, we have sub-elements.
+    def _setAttributes(self, attributes):
+        for (k, v) in attributes.iteritems():
             prop = self.makeelement('property')
             name = prop.makeelement('name')
             name.text = k
             prop.append(name)
             value = prop.makeelement('value')
-            if v is None:
-                value.text = ''
-            elif v is False:
-                value.text = 'false'
-            elif v is True:
-                value.text = 'true'
-            elif isinstance(v, basestring):
-                value.text = v
-            else:
-                value.text = str(v)
+            value.text = _flattenForConfigFile(v)
             prop.append(value)
             self.append(prop)
 
