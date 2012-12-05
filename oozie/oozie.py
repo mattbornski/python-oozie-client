@@ -71,7 +71,6 @@ class client(object):
     def submit(self, configuration):
         response = requests.post(
             url     = '/'.join([self._url, self._version, 'jobs']),
-            params  = {'user.name': 'oozie'},
             data    = xmlFromInput(configuration),
             headers = {'content-type':'application/xml'},
         )

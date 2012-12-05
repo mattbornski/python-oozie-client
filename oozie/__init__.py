@@ -114,8 +114,6 @@ class jobConfiguration(object):
         remoteFilename = 'hdfs://' + remoteFilename
         try:
             assert status == 201
-            with open(localFilename, 'r') as f:
-                assert self._hdfsClient.read(remoteFilename) == f.read()
         except AssertionError:
             raise errors.ServerError('Uploaded file not created: "' + remoteFilename + '"')
         return remoteFilename
@@ -174,6 +172,10 @@ class jobConfiguration(object):
         # TODO is this a sane default for most people?
         if 'oozie.libpath' not in parameters:
             parameters['oozie.libpath'] = 'hdfs:///user/' + parameters['user.name'] + '/lib'
+        # Ensure that the libpath exists and has some JARs.  If not, warn loudly.
+        # TODO
+        #if len(self._hdfsClient.listdir(parameters['oozie.libpath'])) == 0:
+        #    raise errors.ClientError('Libpath "' + parameters['oozie.libpath'] + '" does not exist or is empty.')
             
         # Required parameters which you might not have set.
         # We'll try to do it for you if we can.
