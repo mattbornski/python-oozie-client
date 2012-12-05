@@ -19,10 +19,12 @@ def expectCode(response, expectedCode, verb):
     try:
         assert response.status_code == expectedCode
     except AssertionError:
-        if response.status_code >= 400 and response.status_code < 500:
-            raise errors.ClientError('Malformed input when ' + verb + ' job')
+        if response.status_code == 401:
+            raise errors.ClientError('Permission denied when ' + verb + ' job at ' + response.url + '\nMessage was ' + str(response.status_code) + ':\n' + response.text)
+        elif response.status_code >= 400 and response.status_code < 500:
+            raise errors.ClientError('Malformed input when ' + verb + ' job at ' + response.url + '\nMessage was ' + str(response.status_code) + ':\n' + response.text)
         else:
-            raise errors.ServerError('Unexpected status code when ' + verb + ' job')
+            raise errors.ServerError('Unexpected status code when ' + verb + ' job at ' + response.url + '\nMessage was ' + str(response.status_code) + ':\n' + response.text)
 
 def expectJsonFields(response, expectedFields, verb):
     try:
@@ -30,7 +32,7 @@ def expectJsonFields(response, expectedFields, verb):
         for field in expectedFields:
             assert field in response.json
     except AssertionError:
-        raise errors.ServerError('Malformed response when ' + verb + ' job')
+        raise errors.ServerError('Malformed response when ' + verb + ' job at ' + response.url + '\bMessage was ' + str(response.status_code) + ':\n' + response.text)
 
 
 
@@ -69,6 +71,7 @@ class client(object):
     def submit(self, configuration):
         response = requests.post(
             url     = '/'.join([self._url, self._version, 'jobs']),
+            params  = {'user.name': 'oozie'},
             data    = xmlFromInput(configuration),
             headers = {'content-type':'application/xml'},
         )

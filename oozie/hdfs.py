@@ -14,7 +14,22 @@ class client(webhdfs.webhdfs.WebHDFS):
         if url is None:
             raise errors.ClientError('No WebHDFS URL provided and none set in environment WEBHDFS_URL')
         parsed = urlparse.urlparse(url)
-        super(client, self).__init__(namenode_host=parsed.hostname, namenode_port=parsed.port or 50070, hdfs_username=parsed.username or 'hdfs')
+        # Let's allow for failover configuration URLs like
+        # http://namenode1,namenode2:57000/webhdfs/v1/
+        # If you prefix your URL properly with http we'll parse the comma separated hosts.
+        # If you just pass "namenode1,namenode2" we'll split the whole fake URL.
+        for namenode_host in (parsed.hostname or url).split(','):
+            namenode_port = parsed.port or 50070
+            hdfs_username = parsed.username or 'hdfs'
+            test = webhdfs.webhdfs.WebHDFS(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
+            try:
+                test.listdir('/')
+                super(client, self).__init__(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
+                break
+            except KeyError:
+                pass
+        else:
+            raise errors.ClientError('WebHDFS at ' + url + ' appears misconfigured')
     # Override the webhdfs copy[To|From]Local functions, which erroneously
     # append a leading / to the remote address.
     def copyFromLocal(self, *args, **kwargs):
