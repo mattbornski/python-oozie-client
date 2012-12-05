@@ -2,6 +2,7 @@
 
 import logging
 import lxml.etree
+import os
 import os.path
 import random
 import socket
@@ -56,7 +57,9 @@ class jobConfiguration(object):
         try:
             assert self.__hdfsClient is not None
         except AttributeError:
-            self.__hdfsClient = hdfs.client()
+            # If no WEBHDFS_URL is configured, let's guess based on the name node configured for Oozie
+            webHdfsUrl = os.environ.get('WEBHDFS_URL') or ','.join([h for (h, p) in [(nodename.split(':') + [''])[:2] for nodename in self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist').split(',')]])
+            self.__hdfsClient = hdfs.client(webHdfsUrl)
         return self.__hdfsClient
     
     @property
@@ -75,7 +78,7 @@ class jobConfiguration(object):
         try:
             assert self._uniquifier is not None
         except AttributeError:
-            self._uniquifier = '-'.join([self.get('name'), socket.gethostname(), str(int(time.time() * 1000)), str(random.random())])
+            self._uniquifier = '-'.join([self.get('name'), socket.gethostname(), str(int(time.time() * 1000)), str(''.join([random.choice('0123456789abcdef') for i in xrange(0, 4)]))])
         return self._uniquifier
     
     @property
@@ -107,8 +110,14 @@ class jobConfiguration(object):
         if not remoteFilename.startswith('/'):
             remoteFilename = os.path.join(self.sourcePath, remoteFilename)
         self._hdfsClient.mkdir(os.path.dirname(remoteFilename))
-        self._hdfsClient.copyFromLocal(localFilename, remoteFilename)
+        status = self._hdfsClient.copyFromLocal(localFilename, remoteFilename)
         remoteFilename = 'hdfs://' + remoteFilename
+        try:
+            assert status == 201
+            with open(localFilename, 'r') as f:
+                assert self._hdfsClient.read(remoteFilename) == f.read()
+        except AssertionError:
+            raise errors.ServerError('Uploaded file not created: "' + remoteFilename + '"')
         return remoteFilename
     
     @property
