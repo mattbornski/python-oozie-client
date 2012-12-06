@@ -161,6 +161,12 @@ class jobConfiguration(object):
     
     # Actions which we can take for this job against the Oozie service.
     def submit(self, parameters=None):
+        try:
+            assert self._id is None
+        except AssertionError:
+            raise errors.ClientError('Workflow job instance already submitted')
+        except AttributeError:
+            pass
         # Compose the proper Oozie request which will submit the workflow to
         # the cluster.
         parameters = parameters or {}
@@ -194,11 +200,15 @@ class jobConfiguration(object):
     def run(self):
         return self._oozieClient.run(self.id)
     def suspend(self):
-        pass
+        return self._oozieClient.suspend(self.id)
     def resume(self):
-        pass
+        try:
+            assert self.status == 'SUSPENDED'
+        except AssertionError:
+            raise errors.ClientError('Cannot resume a workflow job that is not suspended')
+        return self._oozieClient.resume(self.id)
     def kill(self):
-        pass
+        return self._oozieClient.kill(self.id)
     def rerun(self, skip, parameters):
         pass
     def schedule(self, action, ts, parameters):
@@ -229,4 +239,8 @@ class jobConfiguration(object):
                 yield line.rstrip('\n')
 
 class workflowJob(elements.workflow, jobConfiguration):
-    pass
+    def __init__(self, *args, **kwargs):
+        if args[0] in self._oozieClient.list():
+            self._id = args[0]
+            args = list(args[1:])
+        super(elements.workflow, self).__init__(*args, **kwargs)

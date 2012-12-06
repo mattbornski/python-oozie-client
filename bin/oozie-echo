@@ -47,8 +47,10 @@ if __name__ == '__main__':
         wf.run()
         while True:
             status = wf.status
-            logging.info('Checked on Oozie job run status: ' + status)
-            if status not in ['PENDING', 'RUNNING']:
+            logging.info('Checked on Oozie job run status: ' + wf.status)
+            if status == 'SUSPENDED':
+                wf.resume()
+            elif wf.status not in ['PENDING', 'RUNNING']:
                 break
             else:
                 time.sleep(10)
