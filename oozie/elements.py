@@ -35,7 +35,7 @@ class workflow(_parameterizedElement):
         # Override the tag.  The XML workflow parent element is "workflow-app"
         self.tag = 'workflow-app'
         self.set('xmlns', 'uri:oozie:workflow:0.1')
-        for action in self._parameters.get('actions'):
+        for action in self._parameters.get('actions', []):
             self.add_action(action)
         
     def add_action(self, parameters=None):

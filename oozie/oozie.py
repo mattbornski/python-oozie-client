@@ -120,3 +120,14 @@ class client(object):
         expectCode(response, 200, 'querying job status')
         expectJsonFields(response, ['status'], 'querying job status')
         return response.json['status']
+    
+    def error(self, jobId):
+        response = requests.get(
+            url = '/'.join([self._url, self._version, 'job', jobId]),
+        )
+        expectCode(response, 200, 'listing job errors')
+        expectJsonFields(response, ['actions'], 'listing job errors')
+        for action in response.json['actions']:
+            if action['errorMessage'] is not None:
+                return action['errorMessage']
+        return None

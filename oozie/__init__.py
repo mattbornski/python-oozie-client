@@ -24,6 +24,23 @@ WORKFLOW_SCRATCH_DIR = '/tmp/oozieworkflows/'
 
 
 
+# Helper function to convert a configuration parameter which probably contains
+# a namenode URI, but might contain several, to a guaranteed single (and
+# hopefully active) namenode.
+def _extractSingleNamenodeUri(namenodeConfiguration):
+    for nodename in namenodeConfiguration.split(','):
+        try:
+            nodename = ([None] + nodename.split('hdfs://', 1))[-1]
+            # Internally, the WebHDFS client will test whether this is a valid name node.
+            c = hdfs.client(nodename)
+            return 'hdfs://' + nodename
+        except KeyboardInterrupt:
+            raise
+        except errors.ClientError:
+            pass
+
+
+
 class jobConfiguration(object):
     # A job is a particular configuration of work.
     # Jobs must be assigned to a cluster before they can be run.
@@ -58,7 +75,7 @@ class jobConfiguration(object):
             assert self.__hdfsClient is not None
         except AttributeError:
             # If no WEBHDFS_URL is configured, let's guess based on the name node configured for Oozie
-            webHdfsUrl = os.environ.get('WEBHDFS_URL') or ','.join([h for (h, p) in [(nodename.split(':') + [''])[:2] for nodename in self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist').split(',')]])
+            webHdfsUrl = os.environ.get('WEBHDFS_URL') or _extractSingleNamenodeUri(self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist'))
             self.__hdfsClient = hdfs.client(webHdfsUrl)
         return self.__hdfsClient
     
@@ -78,7 +95,7 @@ class jobConfiguration(object):
         try:
             assert self._uniquifier is not None
         except AttributeError:
-            self._uniquifier = '-'.join([self.get('name'), socket.gethostname(), str(int(time.time() * 1000)), str(''.join([random.choice('0123456789abcdef') for i in xrange(0, 4)]))])
+            self._uniquifier = '-'.join([self.get('name', 'unknown'), socket.gethostname(), str(int(time.time() * 1000)), str(''.join([random.choice('0123456789abcdef') for i in xrange(0, 4)]))])
         return self._uniquifier
     
     @property
@@ -188,7 +205,7 @@ class jobConfiguration(object):
         if 'jobTracker' not in parameters:
             parameters['jobTracker'] = self._oozieClient.config().get('oozie.service.HadoopAccessorService.jobTracker.whitelist')
         if 'nameNode' not in parameters:
-            parameters['nameNode'] = self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist')
+            parameters['nameNode'] = _extractSingleNamenodeUri(self._oozieClient.config().get('oozie.service.HadoopAccessorService.nameNode.whitelist'))
         
         # Default substitutions I think you might use and I am using to test this
         if 'output' not in parameters:
@@ -209,8 +226,11 @@ class jobConfiguration(object):
         return self._oozieClient.resume(self.id)
     def kill(self):
         return self._oozieClient.kill(self.id)
-    def rerun(self, skip, parameters):
-        pass
+    def rerun(self, skip=None, parameters=None):
+        if skip is None:
+            # Inventory steps.  Skip all the ones that have a status of "OK"
+            skip = 1
+        return self._oozieClient.rerun()
     def schedule(self, action, ts, parameters):
         # Create a coordinator job which will run the job at the specified time.
         pass
@@ -243,4 +263,4 @@ class workflowJob(elements.workflow, jobConfiguration):
         if args[0] in self._oozieClient.list():
             self._id = args[0]
             args = list(args[1:])
-        super(elements.workflow, self).__init__(*args, **kwargs)
+        super(workflowJob, self).__init__(*args, **kwargs)

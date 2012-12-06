@@ -19,15 +19,28 @@ class client(webhdfs.webhdfs.WebHDFS):
         # If you prefix your URL properly with http we'll parse the comma separated hosts.
         # If you just pass "namenode1,namenode2" we'll split the whole fake URL.
         for namenode_host in (parsed.hostname or url).split(','):
-            namenode_port = parsed.port or 50070
-            hdfs_username = parsed.username or 'hdfs'
-            test = webhdfs.webhdfs.WebHDFS(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
-            try:
-                test.listdir('/')
-                super(client, self).__init__(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
-                break
-            except KeyError:
-                pass
+            # The namenode is typically on port 8200 but the WebHDFS version is most often on 50070.
+            namenode_ports = []
+            if parsed.port is not None:
+                namenode_ports.append(parsed.port)
+            if ':' in namenode_host:
+                (namenode_host, p) = namenode_host.split(':', 1)
+                namenode_ports.append(int(p))
+            if 50070 not in namenode_ports:
+                namenode_ports.append(50070)
+            for namenode_port in namenode_ports:
+                hdfs_username = parsed.username or 'hdfs'
+                # Generate a test WebHDFS object
+                test = webhdfs.webhdfs.WebHDFS(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
+                try:
+                    # Test the test object.
+                    test.listdir('/')
+                    # Test looked valid.  Use those same parameters to initialize our superclass.
+                    super(client, self).__init__(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
+                    return
+                # Errors produced when we're unable to retrieve a valid listing using the given parameters.
+                except (KeyError, ValueError):
+                    pass
         else:
             raise errors.ClientError('WebHDFS at ' + url + ' appears misconfigured')
     # Override the webhdfs copy[To|From]Local functions, which erroneously
