@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+
+import argparse
+import logging
+import oozie
+import os.path
+import time
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.WARNING)
+    logging.getLogger('webhdfs').setLevel(logging.WARNING)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filenames', metavar='FILENAME', type=str, nargs='+', help='a filename which we should echo back via MapReduce')
+    args = parser.parse_args()
+    
+    localFilenames = []
+    for filename in args.filenames:
+        if os.path.exists(filename):
+            localFilenames.append(filename)
+        else:
+            logging.warning('File does not exist: ' + filename)
+    
+    if len(localFilenames) > 0:
+        # Compose the workflow
+        wf = oozie.workflowJob({
+            'name': 'hiveQueryWorkflow',
+            'actions': [{
+                'template': 'hive',
+                'input': '${input}',
+            }],
+        })
+        # That's a pretty incomplete Oozie workflow.  Fix it for me, please.
+        wf.fix()
+        # Get ready to submit and run.  All parameters must be defined either
+        # verbatim in the workflow or at time of submission.  One of the
+        # parameters we are interested in is the 
+        remoteFilenames = []
+        for filename in localFilenames:
+            remoteFilenames.append(wf.upload(filename))
+        wf.submit({
+            'input': remoteFilenames,
+        })
+        wf.run()
+        while True:
+            status = wf.status
+            logging.info('Checked on Oozie job run status: ' + wf.status)
+            if status == 'SUSPENDED':
+                wf.resume()
+            elif wf.status not in ['PENDING', 'RUNNING']:
+                break
+            else:
+                time.sleep(10)
+        if status == 'SUCCEEDED':
+            # Fetch results
+            for line in wf.iterOutputLines():
+                logging.info('Output line: ' + line)

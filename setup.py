@@ -31,7 +31,12 @@ setuptools.setup(
     ],
     packages=setuptools.find_packages(),
     scripts=[
+        # Real useful things
+        'bin/oozie-run',
+        
+        # Silly examples which really shouldn't be scripts, but I'm lazy
         'bin/oozie-echo',
         'bin/oozie-healthcheck',
+        'bin/oozie-hive',
     ],
 )

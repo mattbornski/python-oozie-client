@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+
+import argparse
+import logging
+import oozie
+import os.path
+import time
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.WARNING)
+    logging.getLogger('webhdfs').setLevel(logging.WARNING)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('workflow', metavar='WORKFLOW', type=str, action='store', help='a workflow directory')
+    parser.add_argument('input', metavar='INPUT', type=str, nargs='+', help='an input file')
+    args = parser.parse_args()
+    
+    wf = oozie.workflowJob(args.workflow)
+    
+    wf.fix()
+    wf.submit({
+        'input': remoteFilenames,
+    })
+    wf.run()
+    while True:
+        status = wf.status
+        logging.info('Checked on Oozie job run status: ' + wf.status)
+        if status == 'SUSPENDED':
+            wf.resume()
+        elif wf.status not in ['PENDING', 'RUNNING']:
+            break
+        else:
+            time.sleep(10)
+    if status == 'SUCCEEDED':
+        # Fetch results
+        for line in wf.iterOutputLines():
+            logging.info('Output line: ' + line)

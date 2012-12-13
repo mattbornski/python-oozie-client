@@ -112,28 +112,45 @@ class jobConfiguration(object):
         # Determine the status of this job, querying Oozie to find it.
         return self._oozieClient.status(self.id)
     
-    def upload(self, localFilename, remoteFilename=None):
+    def upload(self, localPath, remotePath=None):
         try:
-            assert os.path.exists(localFilename)
+            assert os.path.exists(localPath)
         except AssertionError:
             raise errors.ClientError('File to upload does not exist: "' + localFilename + '"')
-        # Absolute paths will be respected.
-        # Relative paths will be interpreted as relative to the job's scratch directory.
-        # No remote filename provided will result in the same basename in the workflow source
-        # directory.
-        if remoteFilename is None:
-            remoteFilename = os.path.basename(localFilename)
-        remoteFilename = ([''] + remoteFilename.split('hdfs://', 1))[-1]
-        if not remoteFilename.startswith('/'):
-            remoteFilename = os.path.join(self.sourcePath, remoteFilename)
-        self._hdfsClient.mkdir(os.path.dirname(remoteFilename))
-        status = self._hdfsClient.copyFromLocal(localFilename, remoteFilename)
-        remoteFilename = 'hdfs://' + remoteFilename
-        try:
-            assert status == 201
-        except AssertionError:
-            raise errors.ServerError('Uploaded file not created: "' + remoteFilename + '"')
-        return remoteFilename
+        
+        def walk(path):
+            for (dirpath, dirnames, filenames) in os.walk(path):
+                for filename in filenames:
+                    yield os.path.join(dirpath, filename)
+                for dirname in dirnames:
+                    for filename in walk(os.path.join(dirpath, dirname)):
+                        yield filename
+        
+        remotePath = ([''] + (remotePath or self.sourcePath).split('hdfs://', 1))[-1]
+        if not remotePath.startswith('/'):
+            # Not an absolute path.
+            remotePath = os.path.join(self.sourcePath, remotePath)
+        
+        for localFilename in (walk(localPath) if os.path.isdir(localPath) else [localPath]):
+            print 'please upload '
+            print localFilename
+            deltaPath = localPath.split(os.path.commonprefix([localFilename, localPath]), 1)[-1]
+            if deltaPath == '':
+                remoteFilename = os.path.join(remotePath, os.path.basename(localFilename))
+            else:
+                remoteFilename = os.path.join(remotePath, deltaPath)
+            print 'to'
+            print remoteFilename
+            self._hdfsClient.mkdir(os.path.dirname(remoteFilename))
+            
+            status = self._hdfsClient.copyFromLocal(localFilename, remoteFilename)
+            try:
+                assert status == 201
+            except AssertionError:
+                raise errors.ServerError('Uploaded file not created: "' + remoteFilename + '"')
+        
+        remotePath = 'hdfs://' + remotePath
+        return remotePath
     
     @property
     def sourcePath(self):
@@ -162,6 +179,7 @@ class jobConfiguration(object):
             # Set the containing directory as our source path
             self._sourcePath = workflowDirectory
         return self._sourcePath
+    
     @property
     def outputPath(self):
         # Determine or assign the HDFS output path for this invocation of this job.
@@ -260,7 +278,34 @@ class jobConfiguration(object):
 
 class workflowJob(elements.workflow, jobConfiguration):
     def __init__(self, *args, **kwargs):
-        if args[0] in self._oozieClient.list():
-            self._id = args[0]
+        initstring = None
+        if isinstance(args[0], basestring):
+            initstring = args[0]
             args = list(args[1:])
         super(workflowJob, self).__init__(*args, **kwargs)
+        if initstring is not None:
+            if initstring in self._oozieClient.list():
+                # It's a running workflow id to be re-connected to.
+                self._id = initstring
+            elif os.path.exists(initstring):
+                # It's a workflow.xml file or a directory containing one on the local filesystem.
+                if os.path.isdir(initstring):
+                    # Locate XML file
+                    for filename in os.listdir(initstring):
+                        if filename.endswith('.xml'):
+                            # Extract name
+                            with open(os.path.join(initstring, filename), 'r') as f:
+                                wf = lxml.etree.fromstring(f.read())
+                                if wf.tag == 'workflow-app' or wf.tag.endswith('}workflow-app'):
+                                    self.set('name', wf.get('name'))
+                    # Upload entire directory.
+                    self._sourcePath = self.upload(initstring)
+            #    else:
+            #        # Create directory, upload this file as workflow.xml
+            #        
+            #elif :
+            #    # It's a workflow.xml file or a directory containing one on the remote filesystem.
+            #    self._sourcePath = args[0]
+            #    args = list(args[1:])
+            else:
+                raise errors.ClientError('What am I supposed to do with this? "' + args[0] + '"')

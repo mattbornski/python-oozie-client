@@ -1,4 +1,5 @@
 import os
+import socket
 import tempfile
 import urlparse
 import webhdfs.webhdfs
@@ -39,7 +40,7 @@ class client(webhdfs.webhdfs.WebHDFS):
                     super(client, self).__init__(namenode_host=namenode_host, namenode_port=namenode_port, hdfs_username=hdfs_username)
                     return
                 # Errors produced when we're unable to retrieve a valid listing using the given parameters.
-                except (KeyError, ValueError):
+                except (KeyError, ValueError, socket.error):
                     pass
         else:
             raise errors.ClientError('WebHDFS at ' + url + ' appears misconfigured')

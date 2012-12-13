@@ -34,10 +34,10 @@ class workflow(_parameterizedElement):
         super(workflow, self).__init__(*args, **kwargs)
         # Override the tag.  The XML workflow parent element is "workflow-app"
         self.tag = 'workflow-app'
-        self.set('xmlns', 'uri:oozie:workflow:0.1')
+        self.set('xmlns', 'uri:oozie:workflow:0.2')
         for action in self._parameters.get('actions', []):
             self.add_action(action)
-        
+    
     def add_action(self, parameters=None):
         parameters = parameters or {}
         if parameters.get('name') is None:
@@ -50,6 +50,7 @@ class workflow(_parameterizedElement):
             actionElement = action(parameters)
         self.append(actionElement)
         return actionElement
+    
     def fix(self):
         print lxml.etree.tostring(self, pretty_print=True)
         
@@ -116,7 +117,7 @@ class workflow(_parameterizedElement):
             endNode = list(self.iterchildren(tag='end'))[0]
             self.remove(endNode)
             self.append(endNode)
-        
+    
     def validate(self, fix=True):
         # Fix any trivial problems before strict validation.
         if fix:
@@ -203,6 +204,22 @@ class mapreduce(action):
         self.deniedAttributes.extend(['mapper', 'reducer'])
         super(mapreduce, self).__init__(*args, **kwargs)
         self.append(_nestedMapReduce({k: v for (k, v) in self._parameters.iteritems() if k in (self.deniedAttributes + ['name'])}))
+
+class _nestedHive(_nestedAction):
+    def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['mapper', 'reducer', 'name'])
+        super(_nestedMapReduce, self).__init__(*args, **kwargs)
+        # Override the tag.  The hive action element is "hive"
+        self.tag = 'hive'
+        self.set('xmlns', 'uri:oozie:hive-action:0.2')
+
+class hive(action):
+    def __init__(self, *args, **kwargs):
+        self.deniedAttributes = (self.deniedAttributes or [])
+        self.deniedAttributes.extend(['mapper', 'reducer'])
+        super(hive, self).__init__(*args, **kwargs)
+        self.append(_nestedHive({k: v for (k, v) in self._parameters.iteritems() if k in (self.deniedAttributes + ['name'])}))
 
 class ok(_parameterizedElement):
     pass
