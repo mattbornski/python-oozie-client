@@ -4,10 +4,9 @@ import setuptools
 
 setuptools.setup(
     name='oozie',
-    version='0.1.0',
+    version='0.1.1',
     author='Matt Bornski',
     author_email='matt@bornski.com',
-    license='GPLv3',
     url='https://github.com/mattbornski/python-oozie-client',
     
     # Prerequisites:
@@ -29,6 +28,10 @@ setuptools.setup(
         # webhdfs required for HDFS operations on your Hadoop cluster
         'webhdfs',
     ],
+    tests_require=[
+        'nose',
+    ],
+    test_suite='nose.collector',
     packages=setuptools.find_packages(),
     scripts=[
         # Real useful things
